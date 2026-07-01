@@ -52,6 +52,7 @@ export default function Home() {
 
   const [sort, setSort] = useState<SortKey>("modified");
   const [direction, setDirection] = useState<Direction>("desc");
+  const [search, setSearch] = useState("");
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [page, setPage] = useState(0);
   const [total, setTotal] = useState(0);
@@ -61,7 +62,7 @@ export default function Home() {
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
-  const [viewer, setViewer] = useState<Photo | null>(null);
+
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
   const selectedCount = selected.size;
@@ -76,6 +77,8 @@ export default function Home() {
         page: String(nextPage),
         pageSize: String(PAGE_SIZE),
       });
+      const trimmedSearch = search.trim();
+      if (trimmedSearch) params.set("q", trimmedSearch);
       const response = await fetch(`/api/photos?${params.toString()}`);
       const data = (await response.json()) as PhotosResponse & { error?: string };
       if (!response.ok) throw new Error(data.error ?? `${response.status} ${response.statusText}`);
@@ -89,7 +92,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [direction, sort]);
+  }, [direction, search, sort]);
 
   useEffect(() => {
     fetch("/api/folder")
@@ -106,6 +109,8 @@ export default function Home() {
   useEffect(() => {
     if (!folder) return;
     setSelected(new Set());
+    setPhotos([]);
+    setPage(0);
     void loadPhotos(1, true);
   }, [folder, loadPhotos]);
 
@@ -183,7 +188,6 @@ export default function Home() {
         return next;
       });
       setTotal((current) => Math.max(0, current - removed.size));
-      if (viewer && removed.has(viewer.path)) setViewer(null);
 
       if (data.errors.length > 0) {
         alert(`Some files could not be deleted:\n${data.errors.map((item) => `${item.path}: ${item.error}`).join("\n")}`);
@@ -193,14 +197,14 @@ export default function Home() {
     } finally {
       setDeleting(false);
     }
-  }, [selected, viewer]);
+  }, [selected]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setViewer(null);
+
       if (event.key !== "Delete" && event.key !== "Backspace") return;
       const tag = (event.target as HTMLElement).tagName;
-      if (["INPUT", "TEXTAREA", "SELECT", "BUTTON"].includes(tag)) return;
+      if (["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(tag)) return;
       if (selectedCount === 0) return;
       event.preventDefault();
       void deleteSelected();
@@ -216,70 +220,74 @@ export default function Home() {
   }, [folder, loading, photos.length, total]);
 
   return (
-    <main className="min-h-screen bg-neutral-950 text-neutral-100">
+    <main className="min-h-screen bg-neutral-950 pb-24 text-neutral-100">
       <header className="sticky top-0 z-30 border-b border-neutral-800 bg-neutral-950/95 px-4 py-3 backdrop-blur">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="min-w-0 flex-1">
+        <div className="grid gap-3 md:grid-cols-[1fr_auto_1fr] md:items-center">
+          <div className="min-w-0">
             <h1 className="text-lg font-semibold">Photo Viewer</h1>
             <p className="truncate text-xs text-neutral-500">{folder || "Choose a folder"}</p>
           </div>
 
-          <div className="text-xs text-neutral-500">{headerCount}</div>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <select
+              value={sort}
+              onChange={(event) => setSort(event.target.value as SortKey)}
+              className="border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            >
+              <option value="modified">Date</option>
+              <option value="name">Name</option>
+              <option value="size">Size</option>
+            </select>
 
-          <select
-            value={sort}
-            onChange={(event) => setSort(event.target.value as SortKey)}
-            className="border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm outline-none focus:border-blue-500"
-          >
-            <option value="modified">Date</option>
-            <option value="name">Name</option>
-            <option value="size">Size</option>
-          </select>
+            <button
+              type="button"
+              onClick={() => setDirection((current) => (current === "asc" ? "desc" : "asc"))}
+              className="border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-blue-500"
+            >
+              {direction === "asc" ? "↑" : "↓"}
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setDirection((current) => (current === "asc" ? "desc" : "asc"))}
-            className="border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-blue-500"
-          >
-            {direction === "asc" ? "↑" : "↓"}
-          </button>
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              disabled={selectedCount === 0}
+              className="border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Clear
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setSelected(new Set(photos.map((photo) => photo.path)))}
-            disabled={photos.length === 0}
-            className="border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Select loaded
-          </button>
+            <button
+              type="button"
+              onClick={deleteSelected}
+              disabled={selectedCount === 0 || deleting}
+              className="bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {deleting ? "Deleting…" : `Delete${selectedCount ? ` (${selectedCount})` : ""}`}
+            </button>
 
-          <button
-            type="button"
-            onClick={() => setSelected(new Set())}
-            disabled={selectedCount === 0}
-            className="border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Clear
-          </button>
+            <button
+              type="button"
+              onClick={() => setFolderDialogOpen(true)}
+              className="border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-blue-500"
+            >
+              Folder
+            </button>
+          </div>
 
-          <button
-            type="button"
-            onClick={deleteSelected}
-            disabled={selectedCount === 0 || deleting}
-            className="bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {deleting ? "Deleting…" : `Delete${selectedCount ? ` (${selectedCount})` : ""}`}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setFolderDialogOpen(true)}
-            className="border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm hover:border-blue-500"
-          >
-            Folder
-          </button>
+          <div className="text-center text-xs text-neutral-500 md:text-right">{headerCount}</div>
         </div>
       </header>
+
+      <div className="fixed bottom-4 left-4 z-40 w-[min(calc(100vw-2rem),22rem)]">
+        <input
+          type="search"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder="Search photos…"
+          disabled={!folder}
+          className="w-full border border-neutral-700 bg-neutral-950/95 px-3 py-2 text-sm shadow-2xl outline-none backdrop-blur focus:border-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
+        />
+      </div>
 
       {photoError && <div className="m-4 border border-red-900 bg-red-950/40 p-3 text-sm text-red-300">{photoError}</div>}
 
@@ -307,13 +315,15 @@ export default function Home() {
                     />
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={(event) => { event.stopPropagation(); setViewer(photo); }}
+                  <a
+                    href={imageUrl("image", photo.path)}
+                    target="_blank"
+                    rel="noreferrer"
+                    onClick={(event) => event.stopPropagation()}
                     className="absolute right-2 top-2 bg-black/60 px-3 py-1 text-xs text-white opacity-80 hover:opacity-100"
                   >
                     View
-                  </button>
+                  </a>
                 </div>
 
                 <div className={`space-y-1 p-3 ${isSelected ? "bg-blue-600 text-white" : "bg-neutral-800"}`}>
@@ -374,20 +384,6 @@ export default function Home() {
         </div>
       )}
 
-      {viewer && (
-        <div className="fixed inset-0 z-50 flex flex-col bg-black/95 p-3" onClick={() => setViewer(null)}>
-          <div className="mb-3 flex items-center gap-3 text-sm">
-            <div className="min-w-0 flex-1 truncate text-neutral-300">{viewer.name}</div>
-            <button type="button" onClick={() => setViewer(null)} className="border border-neutral-700 px-3 py-2 text-white hover:bg-neutral-900">
-              Close
-            </button>
-          </div>
-          <div className="flex min-h-0 flex-1 items-center justify-center">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={imageUrl("image", viewer.path)} alt={viewer.name} className="max-h-full max-w-full object-contain" onClick={(event) => event.stopPropagation()} />
-          </div>
-        </div>
-      )}
     </main>
   );
 }

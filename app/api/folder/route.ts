@@ -3,11 +3,11 @@ export const dynamic = "force-dynamic";
 
 import fs from "fs";
 import path from "path";
-import { getSettings, saveSettings } from "@/lib/settings";
+import { getSettingsAsync, saveSettingsAsync } from "@/lib/settings";
 import { clearPhotoCache } from "@/lib/photos";
 
 export async function GET() {
-  return Response.json(getSettings());
+  return Response.json(await getSettingsAsync());
 }
 
 export async function POST(req: Request) {
@@ -15,21 +15,21 @@ export async function POST(req: Request) {
   const folder = (body.folder ?? "").trim();
 
   if (!folder) {
-    saveSettings({ folder: "" });
+    await saveSettingsAsync({ folder: "" });
     clearPhotoCache();
     return Response.json({ folder: "" });
   }
 
   const resolved = path.resolve(folder);
   try {
-    if (!fs.statSync(resolved).isDirectory()) {
+    if (!(await fs.promises.stat(resolved)).isDirectory()) {
       return Response.json({ error: "Path is not a folder" }, { status: 400 });
     }
   } catch {
     return Response.json({ error: "Folder does not exist" }, { status: 400 });
   }
 
-  saveSettings({ folder: resolved });
+  await saveSettingsAsync({ folder: resolved });
   clearPhotoCache();
   return Response.json({ folder: resolved });
 }

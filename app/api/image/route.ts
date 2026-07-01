@@ -3,7 +3,8 @@ export const dynamic = "force-dynamic";
 
 import fs from "fs";
 import path from "path";
-import { assertImagePath } from "@/lib/photos";
+import { Readable } from "stream";
+import { assertImagePathAsync } from "@/lib/photos";
 
 const MIME: Record<string, string> = {
   ".jpg": "image/jpeg",
@@ -23,14 +24,19 @@ export async function GET(req: Request) {
 
   let filePath: string;
   try {
-    filePath = assertImagePath(input).path;
+    filePath = (await assertImagePathAsync(input)).path;
   } catch (error) {
     return new Response(error instanceof Error ? error.message : String(error), { status: 403 });
   }
 
-  if (!fs.existsSync(filePath)) return new Response("not found", { status: 404 });
+  try {
+    await fs.promises.access(filePath, fs.constants.R_OK);
+  } catch {
+    return new Response("not found", { status: 404 });
+  }
 
-  return new Response(fs.readFileSync(filePath), {
+  const stream = Readable.toWeb(fs.createReadStream(filePath)) as unknown as ReadableStream;
+  return new Response(stream, {
     headers: {
       "Content-Type": MIME[path.extname(filePath).toLowerCase()] ?? "application/octet-stream",
       "Cache-Control": "public, max-age=3600",

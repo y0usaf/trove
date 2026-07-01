@@ -3,8 +3,9 @@ export const dynamic = "force-dynamic";
 
 import fs from "fs";
 import path from "path";
-import { assertImagePath } from "@/lib/photos";
-import { pendingThumbnails, thumbnailCache } from "@/lib/thumb-cache";
+import { Readable } from "stream";
+import { assertImagePathAsync } from "@/lib/photos";
+import { pendingThumbnails, runThumbnailJob, thumbnailCache } from "@/lib/thumb-cache";
 
 const MAX_CACHE_ITEMS = 800;
 const BROWSER_IMAGE_MIME: Record<string, string> = {
@@ -25,7 +26,7 @@ function unavailableSvg(message: string): Response {
 }
 
 async function thumbnail(filePath: string): Promise<Buffer | null> {
-  const stat = fs.statSync(filePath);
+  const stat = await fs.promises.stat(filePath);
   const key = `${filePath}:${stat.mtimeMs}:${stat.size}`;
   const cached = thumbnailCache.get(key);
   if (cached) return cached;
@@ -38,11 +39,13 @@ async function thumbnail(filePath: string): Promise<Buffer | null> {
       if (sharpLoadFailed) return null;
 
       const sharp = (await import("sharp")).default;
-      const buffer = await sharp(filePath, { pages: 1 })
-        .rotate()
-        .resize(900, 900, { fit: "inside", withoutEnlargement: true })
-        .jpeg({ quality: 84 })
-        .toBuffer();
+      const buffer = await runThumbnailJob(() =>
+        sharp(filePath, { pages: 1 })
+          .rotate()
+          .resize(900, 900, { fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 84 })
+          .toBuffer(),
+      );
 
       if (thumbnailCache.size >= MAX_CACHE_ITEMS) thumbnailCache.delete(thumbnailCache.keys().next().value!);
       thumbnailCache.set(key, buffer);
@@ -66,12 +69,16 @@ export async function GET(req: Request) {
 
   let filePath: string;
   try {
-    filePath = assertImagePath(input).path;
+    filePath = (await assertImagePathAsync(input)).path;
   } catch (error) {
     return new Response(error instanceof Error ? error.message : String(error), { status: 403 });
   }
 
-  if (!fs.existsSync(filePath)) return new Response("not found", { status: 404 });
+  try {
+    await fs.promises.access(filePath, fs.constants.R_OK);
+  } catch {
+    return new Response("not found", { status: 404 });
+  }
 
   const data = await thumbnail(filePath);
   if (data) {
@@ -86,7 +93,8 @@ export async function GET(req: Request) {
   const mime = BROWSER_IMAGE_MIME[path.extname(filePath).toLowerCase()];
   if (!mime) return unavailableSvg("Preview unavailable");
 
-  return new Response(fs.readFileSync(filePath), {
+  const stream = Readable.toWeb(fs.createReadStream(filePath)) as unknown as ReadableStream;
+  return new Response(stream, {
     headers: {
       "Content-Type": mime,
       "Cache-Control": "no-store",
